@@ -1,0 +1,17 @@
+# Build output
+target/
+
+# Worktrees
+.worktrees/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Internal / planning artifacts — NOT part of the deliverable
+*.pdf
+L3_Order_Book_Claude_Code_Brief.md
+docs/
+CLAUDE.md
