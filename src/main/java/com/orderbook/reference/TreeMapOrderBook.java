@@ -77,4 +77,9 @@ public final class TreeMapOrderBook implements OrderBook {
         if (lvl == null) throw new IndexOutOfBoundsException("level " + index);
         return lvl.price;
     }
+
+    /** Test helper: is this order still live (e.g. after a trim)? */
+    public boolean snapshotContains(long orderId) {
+        return orderIndex.containsKey(orderId);
+    }
 }
