@@ -76,4 +76,53 @@ public final class ActiveArrayOrderBook implements OrderBook {
 
     /** Benchmark/diagnostic only, read-only. Not part of the OrderBook API. */
     public long priceAtLevel(Side side, int index) { return half(side).priceAtLevel(index); }
+
+    /** Test-only. Verifies bidirectional consistency and structural integrity. O(N) — not for the hot path. */
+    void validateInvariants() {
+        int linked = validateSide(bids, Side.BID) + validateSide(asks, Side.ASK);
+        if (linked != orderIndex.size())
+            throw new IllegalStateException("index size " + orderIndex.size() + " != linked nodes " + linked);
+        for (var e : orderIndex.entrySet()) {
+            if (e.getKey() != e.getValue().orderId)
+                throw new IllegalStateException("index key " + e.getKey() + " != node id " + e.getValue().orderId);
+        }
+    }
+
+    private int validateSide(HalfBook hb, Side side) {
+        int total = 0;
+        long prevPrice = 0;
+        boolean havePrev = false;
+        for (int i = 0; i < hb.size(); i++) {
+            PriceLevel lvl = hb.at(i);
+            if (lvl == null) throw new IllegalStateException("null level in occupied prefix at " + i);
+            if (lvl.isEmpty()) throw new IllegalStateException("empty level present at index " + i);
+            if (havePrev) {
+                boolean ordered = side == Side.BID ? lvl.price < prevPrice : lvl.price > prevPrice;
+                if (!ordered) throw new IllegalStateException("levels not strictly best-to-worst near index " + i);
+            }
+            prevPrice = lvl.price;
+            havePrev = true;
+            if (lvl.head != null && lvl.head.prev != null) throw new IllegalStateException("head.prev != null at " + lvl.price);
+            if (lvl.tail != null && lvl.tail.next != null) throw new IllegalStateException("tail.next != null at " + lvl.price);
+            long sum = 0;
+            int count = 0;
+            OrderNode prev = null;
+            for (OrderNode n = lvl.head; n != null; n = n.next) {
+                if (n.prev != prev) throw new IllegalStateException("backward link broken at " + n.orderId);
+                if (n.level != lvl) throw new IllegalStateException("node.level mismatch at " + n.orderId);
+                if (n.side != side) throw new IllegalStateException("node.side mismatch at " + n.orderId);
+                if (n.price != lvl.price) throw new IllegalStateException("node.price mismatch at " + n.orderId);
+                if (n.qty <= 0) throw new IllegalStateException("non-positive qty at " + n.orderId);
+                if (orderIndex.get(n.orderId) != n) throw new IllegalStateException("index does not point to node " + n.orderId);
+                sum += n.qty;
+                count++;
+                prev = n;
+                if (count > lvl.orderCount + 1) throw new IllegalStateException("cycle suspected at " + n.orderId);
+            }
+            if (sum != lvl.totalQty) throw new IllegalStateException("totalQty mismatch at price " + lvl.price);
+            if (count != lvl.orderCount) throw new IllegalStateException("orderCount mismatch at price " + lvl.price);
+            total += count;
+        }
+        return total;
+    }
 }
