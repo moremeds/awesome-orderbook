@@ -29,6 +29,7 @@ final class PriceLevel {
     Collection<Order> getOrders() { return orders.values(); }
     boolean isEmpty() { return orders.isEmpty(); }
     long getTotalQty() { return totalQty; }
+    int getOrderCount() { return orders.size(); }
 
     LevelSnapshot toSnapshot() {
         List<OrderSnapshot> os = new ArrayList<>(orders.size());

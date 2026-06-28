@@ -16,7 +16,10 @@ public final class TreeMapOrderBook implements OrderBook {
     private final HalfBook asks = new HalfBook(Side.ASK);
     private final HashMap<Long, Order> orderIndex = new HashMap<>();
 
-    private HalfBook half(Side side) { return side == Side.BID ? bids : asks; }
+    private HalfBook half(Side side) {
+        if (side == null) throw new IllegalArgumentException("side must not be null");
+        return side == Side.BID ? bids : asks;
+    }
 
     @Override public void add(long orderId, Side side, long price, long qty) {
         if (qty <= 0) throw new IllegalArgumentException("qty must be positive for add: " + qty);
@@ -52,6 +55,17 @@ public final class TreeMapOrderBook implements OrderBook {
     @Override public LevelSnapshot getByPrice(Side side, long price) {
         PriceLevel lvl = half(side).getLevel(price);
         return lvl == null ? null : lvl.toSnapshot();
+    }
+
+    @Override public void forEachLevel(Side side, LevelVisitor visitor) {
+        for (PriceLevel lvl : half(side).getLevels())
+            visitor.accept(lvl.price, lvl.getTotalQty(), lvl.getOrderCount());
+    }
+
+    @Override public void forEachOrder(Side side, OrderVisitor visitor) {
+        for (PriceLevel lvl : half(side).getLevels())
+            for (Order o : lvl.getOrders())
+                visitor.accept(lvl.price, o.orderId, o.qty);
     }
 
     @Override public BookSnapshot snapshot() {

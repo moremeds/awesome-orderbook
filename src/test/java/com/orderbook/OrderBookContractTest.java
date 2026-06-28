@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Named;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.function.Supplier;
@@ -206,5 +207,45 @@ class OrderBookContractTest {
         assertEquals(1, b.levelCount(Side.ASK));
         assertEquals(10, b.getByPrice(Side.BID, 100).totalQty());
         assertEquals(5, b.getByPrice(Side.ASK, 100).totalQty());
+    }
+
+    @ParameterizedTest(name = "[{0}] null side rejected on every side-taking op")
+    @MethodSource("impls")
+    void nullSideRejected(Supplier<OrderBook> f) {
+        OrderBook b = f.get();
+        assertThrows(IllegalArgumentException.class, () -> b.add(1, null, 100, 10));
+        assertThrows(IllegalArgumentException.class, () -> b.getByLevel(null, 0));
+        assertThrows(IllegalArgumentException.class, () -> b.getByPrice(null, 100));
+        assertThrows(IllegalArgumentException.class, () -> b.levelCount(null));
+        assertThrows(IllegalArgumentException.class, () -> b.trim(null, 1));
+        assertThrows(IllegalArgumentException.class, () -> b.forEachLevel(null, (p, t, c) -> {}));
+        assertThrows(IllegalArgumentException.class, () -> b.forEachOrder(null, (p, i, q) -> {}));
+    }
+
+    @ParameterizedTest(name = "[{0}] forEachLevel walks best→worst, matches aggregates")
+    @MethodSource("impls")
+    void forEachLevelWalk(Supplier<OrderBook> f) {
+        OrderBook b = f.get();
+        b.add(1, Side.BID, 100, 10);
+        b.add(2, Side.BID, 102, 20);
+        b.add(3, Side.BID, 101, 5);
+        b.add(4, Side.BID, 101, 5);   // second order at 101 → orderCount 2, totalQty 10
+        List<String> walked = new ArrayList<>();
+        b.forEachLevel(Side.BID, (price, totalQty, orderCount) ->
+            walked.add(price + ":" + totalQty + ":" + orderCount));
+        assertEquals(List.of("102:20:1", "101:10:2", "100:10:1"), walked);
+    }
+
+    @ParameterizedTest(name = "[{0}] forEachOrder walks L3 best→worst, FIFO within")
+    @MethodSource("impls")
+    void forEachOrderWalk(Supplier<OrderBook> f) {
+        OrderBook b = f.get();
+        b.add(1, Side.ASK, 100, 10);
+        b.add(2, Side.ASK, 100, 20);  // same level, later in FIFO
+        b.add(3, Side.ASK, 101, 5);
+        List<String> walked = new ArrayList<>();
+        b.forEachOrder(Side.ASK, (price, orderId, qty) ->
+            walked.add(price + "/" + orderId + "/" + qty));
+        assertEquals(List.of("100/1/10", "100/2/20", "101/3/5"), walked);
     }
 }
