@@ -21,6 +21,21 @@ public interface OrderBook {
     /** @return the level at an exact price, or null if absent. Materializes only this level. */
     LevelSnapshot getByPrice(Side side, long price);
 
+    /**
+     * Walk every price level best→worst, allocation-free (no snapshot objects).
+     * This is the low-latency answer to the "iterate all price levels" requirement;
+     * {@link #snapshot()} is the allocating, diagnostic alternative.
+     * @throws IllegalArgumentException if side is null
+     */
+    void forEachLevel(Side side, LevelVisitor visitor);
+
+    /**
+     * Walk every order — levels best→worst, FIFO within each level — allocation-free.
+     * Covers "within each level iterate the individual orders" without materializing the book.
+     * @throws IllegalArgumentException if side is null
+     */
+    void forEachOrder(Side side, OrderVisitor visitor);
+
     /** Whole-book normalized view (best→worst, FIFO within). For diagnostics / differential testing. */
     BookSnapshot snapshot();
 

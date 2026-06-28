@@ -20,7 +20,10 @@ public final class ActiveArrayOrderBook implements OrderBook {
         this.orderIndex = new HashMap<>(Math.max(16, (int) (expectedOrders / 0.75f) + 1));
     }
 
-    private HalfBook half(Side side) { return side == Side.BID ? bids : asks; }
+    private HalfBook half(Side side) {
+        if (side == null) throw new IllegalArgumentException("side must not be null");
+        return side == Side.BID ? bids : asks;
+    }
 
     @Override public void add(long orderId, Side side, long price, long qty) {
         if (qty <= 0) throw new IllegalArgumentException("qty must be positive for add: " + qty);
@@ -55,6 +58,23 @@ public final class ActiveArrayOrderBook implements OrderBook {
     @Override public LevelSnapshot getByPrice(Side side, long price) {
         PriceLevel lvl = half(side).get(price);
         return lvl == null ? null : lvl.toSnapshot();
+    }
+
+    @Override public void forEachLevel(Side side, LevelVisitor visitor) {
+        HalfBook hb = half(side);
+        for (int i = 0, n = hb.size(); i < n; i++) {
+            PriceLevel lvl = hb.at(i);
+            visitor.accept(lvl.price, lvl.totalQty, lvl.orderCount);
+        }
+    }
+
+    @Override public void forEachOrder(Side side, OrderVisitor visitor) {
+        HalfBook hb = half(side);
+        for (int i = 0, n = hb.size(); i < n; i++) {
+            PriceLevel lvl = hb.at(i);
+            for (OrderNode node = lvl.head; node != null; node = node.next)
+                visitor.accept(lvl.price, node.orderId, node.qty);
+        }
     }
 
     @Override public BookSnapshot snapshot() {
