@@ -1,6 +1,7 @@
 package com.orderbook;
 
 import org.junit.jupiter.api.Test;
+import java.util.ArrayList;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -78,17 +79,17 @@ class HalfBookTest {
     }
 
     @Test
-    void trimDiscardsWorstTailAndReturnsNodes() {
+    void trimDiscardsWorstTailAndReportsEvicted() {
         HalfBook hb = new HalfBook(Side.BID); // best = highest
         for (long p = 100; p <= 104; p++) hb.getOrCreate(p).append(node(p, Side.BID, p, 1));
         // order best→worst: 104,103,102,101,100
-        List<OrderNode> evicted = hb.trim(3); // keep 104,103,102; drop 101,100
+        List<Long> evicted = new ArrayList<>();
+        hb.trim(3, evicted::add); // keep 104,103,102; drop 101,100
         assertEquals(3, hb.size());
         assertEquals(102, hb.at(2).price);
         assertNull(hb.get(101));
         assertNull(hb.get(100));
-        assertEquals(2, evicted.size());
-        assertEquals(List.of(101L, 100L), evicted.stream().map(n -> n.orderId).toList());
+        assertEquals(List.of(101L, 100L), evicted);
     }
 
     @Test
@@ -96,7 +97,9 @@ class HalfBookTest {
         HalfBook hb = new HalfBook(Side.BID);
         hb.getOrCreate(100);
         hb.getOrCreate(101);
-        assertTrue(hb.trim(5).isEmpty());
+        List<Long> evicted = new ArrayList<>();
+        hb.trim(5, evicted::add);
+        assertTrue(evicted.isEmpty());
         assertEquals(2, hb.size());
     }
 }

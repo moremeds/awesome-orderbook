@@ -91,7 +91,7 @@ public final class ActiveArrayOrderBook implements OrderBook {
     @Override public int orderCount() { return orderIndex.size(); }
 
     @Override public void trim(Side side, int maxLevels) {
-        for (OrderNode n : half(side).trim(maxLevels)) orderIndex.remove(n.orderId);
+        half(side).trim(maxLevels, id -> orderIndex.remove(id));
     }
 
     /** Benchmark/diagnostic only, read-only. Not part of the OrderBook API. */
