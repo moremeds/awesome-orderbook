@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
-@Fork(1)
+@Fork(2)
 public class OrderBookBenchmark implements LevelVisitor, OrderVisitor {
 
     @Param({"100"})

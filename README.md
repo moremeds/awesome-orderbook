@@ -7,12 +7,28 @@ oracle and benchmark baseline — so the design choice is validated, not just as
 
 ## Build & run
 
+Requires **JDK 21+** and **Maven 3.9+**.
+
+**macOS / Linux:**
+
 ```bash
 mvn test                       # unit, contract, invariant, and differential tests
-./scripts/run-benchmarks.sh    # JMH latency comparison (~1 min; not part of `mvn test`)
+./scripts/run-benchmarks.sh    # forked JMH latency comparison (~5 min; not part of `mvn test`)
 ```
 
-Requires JDK 21+ and Maven 3.9+. (macOS: `brew install openjdk@21 maven`.)
+Install: macOS `brew install openjdk@21 maven`; Linux e.g. `apt install openjdk-21-jdk maven`.
+
+**Windows:** install a JDK 21 (e.g. `winget install EclipseAdoptium.Temurin.21.JDK`, or download
+from [adoptium.net](https://adoptium.net)) and Maven (`choco install maven`, or from
+[maven.apache.org](https://maven.apache.org)). Ensure `JAVA_HOME` points at the JDK and that
+`%JAVA_HOME%\bin` and Maven's `bin` are on `PATH`. Then, in **PowerShell**:
+
+```powershell
+mvn test                       # same suite, cross-platform
+.\scripts\run-benchmarks.ps1   # forked JMH comparison (PowerShell mirror of the .sh)
+```
+
+The bash script also runs under WSL or Git Bash if you prefer.
 
 ## Design evolution: baseline → array → allocation-free
 
@@ -20,9 +36,10 @@ This wasn't one leap. It's a textbook baseline plus two deliberate, *measured* i
 validated against the one before it.
 
 **V1 — `TreeMap` baseline (the textbook-correct version).** `TreeMap<price, PriceLevel>` per side,
-`LinkedHashMap<orderId, Order>` per level. Every operation O(log P); obviously correct; the version a
-competent engineer writes first. It is still in the repo (`reference/TreeMapOrderBook`) — not thrown
-away but *promoted* to the correctness oracle and benchmark baseline.
+`LinkedHashMap<orderId, Order>` per level. Price-level lookup and structural mutation are generally
+O(log P) (iteration is O(P + O)); obviously correct; the version a competent engineer writes first. It
+is still in the repo (`reference/TreeMapOrderBook`) — not thrown away but *promoted* to the correctness
+oracle and benchmark baseline.
 - *Trade-off:* a red-black tree pointer-chases, has no O(1) by-level access, and allocates on every
   read. Fine for correctness, not for a latency-sensitive, iteration-heavy workload.
 
@@ -34,8 +51,9 @@ doubly-linked FIFO plus a single global `orderId → OrderNode` index.
 - *Trade-off accepted:* inserting/removing a *level* shifts up to P references via `System.arraycopy`
   (O(P)) — bounded, and measured to beat tree node-allocation + rebalancing at this depth. A price
   change loses time priority (modeled as remove + add — deliberate, not a bug).
-- *Why:* the brief's workload is shallow, by-level-indexed and iteration-heavy — exactly where
-  contiguous memory beats a tree.
+- *Why:* the brief's workload is shallow, by-level-indexed and iteration-heavy — exactly where a
+  compact, contiguous representation fits the access pattern better than a tree (validated by the
+  forked benchmark below, not asserted).
 
 **V3 — allocation-free iteration + measured hardening (the production-efficiency layer).** Add
 `forEachLevel` / `forEachOrder` visitors that walk the whole book best→worst with **zero allocation**
@@ -118,7 +136,7 @@ M = orders at the target level, D = levels dropped by a trim, R = orders evicted
 | **get-by-level(k)** | **O(1)** locate + O(M) materialize | O(log P + k) locate + O(M) materialize |
 | **get-by-price** | O(log P) locate + O(M) materialize | O(log P) locate + O(M) materialize |
 | **iteration** (whole book) | **O(P + O)**, allocation-free | O(P + O), one native iterator |
-| **trim(t)** | O(D + R) | O(D + R) |
+| **trim(t)** | O(D + R) time, **O(1) extra space** (callback-driven) | **O(D log P + R)** — each `pollLastEntry` is O(log P) |
 
 *Location vs materialization:* a snapshot of one level always copies its M orders — O(M) on both — so
 the array's read advantage is purely in **locating** the level (O(1) index vs O(log P + k) tree walk),
@@ -155,43 +173,46 @@ Three layers, strongest last:
 
 ## Benchmark
 
-JMH 1.37, `SampleTime`, **3×1s warmup + 5×1s measurement**. `@Fork(1)` in annotations, overridden to
-in-process **`forks(0)`** by `BenchmarkRunner` (see caveat). Book = 100 levels × 10 orders (ask side).
-Environment: **Apple M5, macOS 26.5.1, OpenJDK 21.0.11** (absolute ns shift with JDK/hardware — the
-*ratios* are the signal). Read benchmarks accumulate primitives (no snapshot allocation); iteration
-benchmarks use the allocation-free `forEachLevel` / `forEachOrder` visitor. Separate `@Benchmark`
-methods per implementation keep interface dispatch out of the measured path.
+JMH 1.37, `SampleTime`, **3×1s warmup + 5×1s measurement, `@Fork(2)` — real forked JVMs**. Run with
+`scripts/run-benchmarks.sh` (or `scripts/run-benchmarks.ps1` on Windows), which launches `java`
+directly with the assembled test classpath so JMH's child forks inherit it. Book = 100 levels × 10
+orders (ask side). Environment: **Apple M5, macOS 26.5.1, OpenJDK 21.0.11** (absolute ns shift with
+JDK/hardware — the *ratios* are the signal). Read benchmarks accumulate primitives (no snapshot
+allocation); iteration benchmarks use the allocation-free `forEachLevel` / `forEachOrder` visitor.
+Separate `@Benchmark` methods per implementation keep interface dispatch out of the measured path.
 
 | Operation | Array (mean) | TreeMap (mean) | Note |
 |---|---:|---:|---|
-| **iterate levels best→worst** (×100) | **29.1 ns** | 259.4 ns | array ~8.9×: sequential reference walk vs tree pointer-chasing |
-| **iterate all orders** (full L3, ×1000) | **555 ns** | 2495 ns | array ~4.5×: intrusive-link walk vs per-level iterators |
-| repeated get-by-index (×10, *not* iteration) | **12.4 ns** | 90.0 ns | array O(1)/call; tree re-walks from front + allocates an iterator each call |
-| update qty | **14.7 ns** | 26.7 ns | array ~1.8×: node→level direct; tree re-locates level by price (O(log P)) |
-| add + remove a middle level | **48.8 ns** | 72.2 ns | array faster even on its *theoretical* weak spot |
-| getByLevel(5), single call | 16.7 ns | 16.7 ns | dead heat — see below |
+| **iterate levels best→worst** (×100) | **28.5 ns** | 271.0 ns | array ~9.5×: sequential reference walk vs tree pointer-chasing |
+| **iterate all orders** (full L3, ×1000) | **579 ns** | 2460 ns | array ~4.3×: intrusive-link walk vs per-level iterators |
+| repeated get-by-index (×10, *not* iteration) | **14.5 ns** | 82.7 ns | array O(1)/call; tree re-walks from front + allocates an iterator each call |
+| update qty | **19.0 ns** | 26.6 ns | array ~1.4×: node→level direct; tree re-locates level by price (O(log P)) |
+| add + remove a middle level | **51.2 ns** | 70.0 ns | array faster even on its *theoretical* weak spot |
+| getByLevel(5), single call | **13.2 ns** | 16.5 ns | array ~1.25× — forking resolves the prior timer-floor dead heat |
 
 **Honest reading of the numbers:**
-- **True iteration validates the locality claim** — ~8.9× on levels, ~4.5× on the full order walk.
+- **True iteration validates the locality claim** — ~9.5× on levels, ~4.3× on the full order walk.
   The array is a sequential reference/link walk; the TreeMap chases node pointers across the heap even
   with a native iterator.
 - **An earlier version of this benchmark mislabeled "repeated get-by-index" as "iteration."** Calling
   `getByLevel(i)` in a loop makes the TreeMap re-walk from the front *and allocate a fresh iterator*
   every call — conflating two different costs. They are now separate rows: repeated point-access
-  (~7.3×) and true single-pass iteration (~8.9×).
-- The **`getByLevel(5)` single-call dead heat is a measurement floor**, not a refutation: one ~17 ns op
-  sits on `SampleTime`'s timer resolution. The O(1)-vs-O(log P + k) gap only surfaces once enough calls
-  aggregate — which the repeated-index and iterate rows show.
+  (~5.7×) and true single-pass iteration (~9.5×).
+- The **`getByLevel(5)` single call is now a small but real array win (~1.25×)**, not a dead heat:
+  forking out the harness's JIT/measurement noise surfaced what in-process runs had left on the
+  `SampleTime` timer floor. The gap is one O(1)-vs-O(log P + k) op, so it stays small and only widens
+  with aggregation — as the iterate rows show.
 - **update** is array-direct (the intrusive node reaches its level); the TreeMap re-locates the level by
   price, an extra O(log P).
 - **adding a new middle level** — the array's theoretical weak spot (it shifts ~100 references) — is
   still faster: `arraycopy` of references beats a tree node allocation + rebalance *at this depth*.
   Do not generalize that past shallow books.
 
-**Caveats.** Benchmarks run **in-process** (`forks(0)`): under `mvn exec:java` a forked JMH VM inherits
-Maven's classpath, not the project's, so a fresh fork can't find the benchmark classes. In-process
-runs are less isolated, so these are **relative** comparisons under one controlled workload, **not**
-production latency guarantees. Hardware, JVM config, and workload shape all matter.
+**Caveats.** Forked JMH gives real JVM isolation, but these are still **relative** comparisons under a
+single **workload shape** (100 levels × 10 orders, ASK side) — not absolute production latency
+guarantees. Hardware, JDK, and book shape all matter: a deeper or sparser book would shift the
+middle-insert and iteration costs, and mapping that crossover (varying depth via `@Param`) is left as
+future work. Reproduce with `scripts/run-benchmarks.sh`.
 
 ## Design goals & non-goals
 

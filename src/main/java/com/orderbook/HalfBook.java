@@ -1,8 +1,7 @@
 package com.orderbook;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
+import java.util.function.LongConsumer;
 
 /**
  * One side, as a compact array of active price levels held physically best→worst.
@@ -69,17 +68,18 @@ final class HalfBook {
         levels[--size] = null;
     }
 
-    /** Keep best maxLevels; discard the worst contiguous tail. Returns evicted nodes. */
-    List<OrderNode> trim(int maxLevels) {
+    /**
+     * Keep best maxLevels; discard the worst contiguous tail. Reports each evicted order's id to the
+     * callback so the caller can clean its global index — no temporary collection is allocated.
+     */
+    void trim(int maxLevels, LongConsumer onEvictedOrderId) {
         int keep = Math.max(0, maxLevels);
-        List<OrderNode> evicted = new ArrayList<>();
-        if (keep >= size) return evicted;
+        if (keep >= size) return;
         for (int i = keep; i < size; i++) {
-            for (OrderNode n = levels[i].head; n != null; n = n.next) evicted.add(n);
+            for (OrderNode n = levels[i].head; n != null; n = n.next) onEvictedOrderId.accept(n.orderId);
             levels[i] = null;
         }
         size = keep;
-        return evicted;
     }
 
     long priceAtLevel(int index) { return levels[index].price; }
